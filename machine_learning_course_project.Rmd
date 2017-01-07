@@ -1,0 +1,171 @@
+---
+title: "Machine Learning Course project"
+author: "Javier Iglesia Aparicio"
+date: "3 de enero de 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Introduction
+##Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+##Goal
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+##Reading data
+
+The training data for this project are available here:
+ https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+ https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+```{r, message=FALSE, warning=FALSE}
+set.seed(12344)
+#Loading required libraries
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+
+#Reading datasets 
+training <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+# Then I look into the training data
+str(training)
+# This the variable we should predict
+summary(training$classe)
+```
+
+# Developing the prediction
+We have to predict the *classe* variable. It is a factor variable with five different values: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4V6FsbwcA
+
+## Partitioning the original training data
+We will split the original training data into a “training” set and a “validation” set. The training subset will include 80% of the observations and the remaining will be used to calculate the out-of-sample error.
+
+```{r}
+inTrain <- createDataPartition(training$classe, p=0.8, list=FALSE)
+myTraining <- training[inTrain, ]
+myTesting <- training[-inTrain, ]
+dim(myTraining); dim(myTesting)
+```
+
+##Cleaning and transforming data
+If we inspect the dataset, we can see a lot of variables without data or not concerning the movement data. So, first we are going to remove these variables:
+
+1.First I remove X, user_name and variables taht contains window and timestamp in its name.
+2.Then I remove those variables with near zero variance.
+3.Variables with more than 75% of NA values.
+
+```{r}
+#Removing X and user_name columns
+myTraining <- myTraining %>% select(-X) %>% select (-user_name)
+myTesting <- myTesting %>% select(-X) %>% select (-user_name)
+#Removing timestamp and window columns not contains sensor measurement data
+myTraining <- myTraining %>% select(-contains("window")) %>% select(-contains("timestamp"))
+myTesting <- myTesting %>% select(-contains("window")) %>% select(-contains("timestamp"))
+#Determining Near Zero Variance Variables
+nearzerovars<- nearZeroVar(myTraining, saveMetrics = TRUE)
+myTraining<- myTraining[,nearzerovars$nzv==FALSE]
+
+nearzerovars<- nearZeroVar(myTesting, saveMetrics = TRUE)
+myTesting<- myTesting[,nearzerovars$nzv==FALSE]
+#Last, we drop columns with all o majority NA values
+variableNAs <- colMeans(is.na(myTraining))
+myTraining <- myTraining[!variableNAs]
+
+variableNAs <- colMeans(is.na(myTesting))
+myTesting <- myTesting[!variableNAs]
+
+```
+So, finally, we will use `r ncol(myTraining)` variables.
+
+## Model 1: Decision Trees
+First we try a decision tree model. 
+```{r}
+modDecTree <- rpart(classe~., data=myTraining, method="class")
+print(modDecTree)
+```
+
+The plot is:
+
+```{r, echo=FALSE}
+fancyRpartPlot(modDecTree)
+```
+
+Now we apply the model to myTesting data
+
+```{r}
+predictionDecTree <- predict(modDecTree, myTesting, type="class")
+cmDecTree <- confusionMatrix(predictionDecTree, myTesting$classe)
+cmDecTree
+```
+
+The calculated accuracy is `r cmDecTree$overall[1]`.
+
+
+##Model 2: Random forest
+
+Usually random forest is one of the most accurated methods.
+```{r}
+
+modRanForest <- randomForest(classe~., data=myTraining)
+predictionRanForest <- predict(modRanForest, myTesting, type="class")
+cmRanForest <- confusionMatrix(predictionRanForest, myTesting$classe)
+cmRanForest
+```
+The calculated accuracy is `r cmRanForest$overall[1]`
+
+So, this method is better than previous. 
+```{r}
+plot(modRanForest, main="Error rate vs. # of trees")
+```
+
+And the six most important predictors are:
+
+```{r}
+vi<- varImp(modRanForest)
+vi$variables<-row.names(vi)
+vi<- arrange(vi, desc(Overall))
+head(vi)
+
+```
+
+
+# Applying Random Forest model to Test Data
+We apply this model to the original test data. First, we make the same cleaning and transforming.
+
+```{r}
+#Removing X and user_name columns
+testing <- testing %>% select(-X) %>% select (-user_name)
+
+#Removing timestamp and window columns not contains sensor measurement data
+testing <- testing %>% select(-contains("window")) %>% select(-contains("timestamp"))
+
+#Determining Near Zero Variance Variables
+nearzerovars<- nearZeroVar(testing, saveMetrics = TRUE)
+testing<- testing[,nearzerovars$nzv==FALSE]
+
+
+#Last, we drop columns with all o majority NA values
+variableNAs <- colMeans(is.na(testing))
+testing <- testing[!variableNAs]
+
+# Prediction
+
+predictionRanForestTest <- predict(modRanForest, testing, type="class")
+predictionRanForestTest
+
+```
+
+
